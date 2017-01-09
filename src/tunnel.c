@@ -410,6 +410,7 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
             ERROR("send");
             close_and_free_remote(EV_A_ remote);
             close_and_free_server(EV_A_ server);
+            return;
         }
     } else if (s < server->buf->len) {
         server->buf->len -= s;
@@ -418,10 +419,13 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
         ev_io_start(EV_A_ & server->send_ctx->io);
     }
 
-    // Disable TCP_NODELAY after the first response are sent
-    int opt = 0;
-    setsockopt(server->fd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
-    setsockopt(remote->fd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+    if (!remote->recv_ctx->connected) {
+        // Disable TCP_NODELAY after the first response are sent
+        int opt = 0;
+        setsockopt(server->fd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+        setsockopt(remote->fd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+        remote->recv_ctx->connected = 1;
+    }
 }
 
 static void
@@ -846,7 +850,7 @@ accept_cb(EV_P_ ev_io *w, int revents)
     if (server->obfs_plugin)
         server->obfs_plugin->set_server_info(server->obfs, &_server_info);
 
-    _server_info.param = NULL;
+    _server_info.param = listener->protocol_param;
     _server_info.g_data = listener->list_protocol_global[remote->remote_index];
 
     if (server->protocol_plugin)
@@ -880,6 +884,7 @@ main(int argc, char **argv)
     char *password   = NULL;
     char *timeout    = NULL;
     char *protocol = NULL; // SSR
+    char *protocol_param = NULL; // SSR
     char *method = NULL;
     char *obfs = NULL; // SSR
     char *obfs_param = NULL; // SSR
@@ -959,6 +964,7 @@ main(int argc, char **argv)
             obfs = optarg;
             break;
         case 'G':
+            protocol_param = optarg;
             break;
         case 'g':
             obfs_param = optarg;
@@ -1052,6 +1058,10 @@ main(int argc, char **argv)
         if (protocol == NULL) {
             protocol = conf->protocol;
             LOGI("protocol %s", protocol);
+        }
+        if (protocol_param == NULL) {
+            protocol_param = conf->protocol_param;
+            LOGI("protocol_param %s", protocol_param);
         }
         if (method == NULL) {
             method = conf->method;
@@ -1184,6 +1194,7 @@ main(int argc, char **argv)
     listen_ctx.iface   = iface;
     // SSR beg
     listen_ctx.protocol_name = protocol;
+    listen_ctx.protocol_param = protocol_param;
     listen_ctx.method = m;
     listen_ctx.obfs_name = obfs;
     listen_ctx.obfs_param = obfs_param;
@@ -1219,7 +1230,7 @@ main(int argc, char **argv)
         LOGI("UDP relay enabled");
         init_udprelay(local_addr, local_port, listen_ctx.remote_addr[0],
                       get_sockaddr_len(listen_ctx.remote_addr[0]),
-                      tunnel_addr, mtu, m, auth, listen_ctx.timeout, iface, protocol);
+                      tunnel_addr, mtu, m, auth, listen_ctx.timeout, iface, protocol, protocol_param);
     }
 
     if (mode == UDP_ONLY) {

@@ -58,7 +58,7 @@
 #include "utils.h"
 #include "netutils.h"
 #include "cache.h"
-#include "udprelay.h"
+#include "uotrelay.h"
 
 #ifdef MODULE_REMOTE
 #define MAX_UDP_CONN_NUM 512
@@ -90,6 +90,13 @@ static void query_resolve_cb(struct sockaddr *addr, void *data);
 #endif
 static void close_and_free_remote(EV_P_ remote_ctx_t *ctx);
 static remote_ctx_t *new_remote(int fd, server_ctx_t *server_ctx);
+
+
+static remote_t *create_remote_tcp(listen_ctx_t *listener, struct sockaddr *addr);
+static void free_remote_tcp(remote_t *remote);
+static void close_and_free_remote_tcp(EV_P_ remote_t *remote);
+static remote_t *new_remote_tcp(int fd, server_ctx_t *server_ctx);
+
 
 #ifdef ANDROID
 extern uint64_t tx;
@@ -489,6 +496,74 @@ new_remote(int fd, server_ctx_t *server_ctx)
                   server_ctx->timeout);
 
     return ctx;
+}
+
+static remote_t *
+new_remote_tcp(int fd, int timeout)
+{
+    remote_t *remote;
+    remote = ss_malloc(sizeof(remote_t));
+
+    memset(remote, 0, sizeof(remote_t));
+
+    remote->buf                 = ss_malloc(sizeof(buffer_t));
+    remote->recv_ctx            = ss_malloc(sizeof(remote_ctx_t));
+    remote->send_ctx            = ss_malloc(sizeof(remote_ctx_t));
+    remote->recv_ctx->connected = 0;
+    remote->send_ctx->connected = 0;
+    remote->fd                  = fd;
+    remote->recv_ctx->remote    = remote;
+    remote->send_ctx->remote    = remote;
+
+    ev_io_init(&remote->recv_ctx->io, remote_recv_cb_tcp, fd, EV_READ);
+    ev_timer_init(&remote->recv_ctx->watcher, remote_timeout_cb_tcp,
+                  timeout, timeout);
+
+    balloc(remote->buf, BUF_SIZE);
+
+    return remote;
+}
+
+static remote_t *
+create_remote_tcp(listen_ctx_t *listener,
+              struct sockaddr *addr)
+{
+    struct sockaddr *remote_addr;
+
+    int index = rand() % listener->remote_num;
+    if (addr == NULL) {
+        remote_addr = listener->remote_addr[index];
+    } else {
+        remote_addr = addr;
+    }
+
+    int remotefd = socket(remote_addr->sa_family, SOCK_STREAM, IPPROTO_TCP);
+
+    if (remotefd == -1) {
+        ERROR("socket");
+        return NULL;
+    }
+
+    int opt = 1;
+    setsockopt(remotefd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+#ifdef SO_NOSIGPIPE
+    setsockopt(remotefd, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
+#endif
+
+    // Setup
+    setnonblocking(remotefd);
+#ifdef SET_INTERFACE
+    if (listener->iface) {
+        if (setinterface(remotefd, listener->iface) == -1)
+            ERROR("setinterface");
+    }
+#endif
+
+    remote_t *remote = new_remote_tcp(remotefd, listener->timeout);
+    remote->addr_len = get_sockaddr_len(remote_addr);
+    memcpy(&(remote->addr), remote_addr, remote->addr_len);
+
+    return remote;
 }
 
 server_ctx_t *
@@ -1352,7 +1427,7 @@ init_udprelay(const char *server_host, const char *server_port,
               const ss_addr_t tunnel_addr,
 #endif
 #endif
-              int mtu, int method, int auth, int timeout, const char *iface, const char *protocol, const char *protocol_param)
+              int mtu, int method, int auth, int timeout, const char *iface, const char *protocol, const char *obfs, const char *obfs_param)
 {
     // Initialize ev loop
     struct ev_loop *loop = EV_DEFAULT;
@@ -1400,15 +1475,29 @@ init_udprelay(const char *server_host, const char *server_port,
         server_ctx->protocol_global = server_ctx->protocol_plugin->init_data();
     }
 
+    server_ctx->obfs_plugin = new_obfs_class((char *)obfs);
+    if (server_ctx->obfs_plugin) {
+        server_ctx->obfs = server_ctx->obfs_plugin->new_obfs();
+        server_ctx->obfs_global = server_ctx->obfs_plugin->init_data();
+    }
+
     server_info _server_info;
     memset(&_server_info, 0, sizeof(server_info));
     strcpy(_server_info.host, inet_ntoa(((struct sockaddr_in*)remote_addr)->sin_addr));
     _server_info.port = ((struct sockaddr_in*)remote_addr)->sin_port;
     _server_info.port = _server_info.port >> 8 | _server_info.port << 8;
+    _server_info.param = (char *)obfs_param;
     _server_info.g_data = server_ctx->protocol_global;
-    _server_info.param = (char *)protocol_param;
+    _server_info.head_len = (AF_INET6 == server_ctx->remote_addr->sa_family ? 19 : 7);
     _server_info.key = enc_get_key();
     _server_info.key_len = enc_get_key_len();
+    _server_info.tcp_mss = 1460;
+
+    if (server_ctx->obfs_plugin)
+        server_ctx->obfs_plugin->set_server_info(server_ctx->obfs, &_server_info);
+
+    _server_info.param = NULL;
+    _server_info.g_data = server_ctx->obfs_global;
 
     if (server_ctx->protocol_plugin)
         server_ctx->protocol_plugin->set_server_info(server_ctx->protocol, &_server_info);
@@ -1439,6 +1528,13 @@ free_udprelay()
             server_ctx->protocol = NULL;
             free_obfs_class(server_ctx->protocol_plugin);
             server_ctx->protocol_plugin = NULL;
+        }
+
+        if (server_ctx->obfs_plugin) {
+            server_ctx->obfs_plugin->dispose(server_ctx->obfs);
+            server_ctx->obfs = NULL;
+            free_obfs_class(server_ctx->obfs_plugin);
+            server_ctx->obfs_plugin = NULL;
         }
         //SSR end
 #endif

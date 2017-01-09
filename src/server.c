@@ -340,9 +340,7 @@ report_addr(int fd, int err_level)
     peer_name = get_peer_name(fd);
     if (peer_name != NULL) {
         LOGE("failed to handshake with %s", peer_name);
-        if (update_block_list(peer_name, err_level)) {
-            LOGE("add %s to block list", peer_name);
-        }
+        update_block_list(peer_name, err_level);
     }
 }
 
@@ -362,6 +360,7 @@ setfastopen(int fd)
         if (s == -1) {
             if (errno == EPROTONOSUPPORT || errno == ENOPROTOOPT) {
                 LOGE("fast open is not supported on this platform");
+                fast_open = 0;
             } else {
                 ERROR("setsockopt");
             }
@@ -1321,6 +1320,7 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
             ERROR("remote_recv_send");
             close_and_free_remote(EV_A_ remote);
             close_and_free_server(EV_A_ server);
+            return;
         }
     } else if (s < server->buf->len) {
         server->buf->len -= s;
@@ -1330,9 +1330,12 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
     }
 
     // Disable TCP_NODELAY after the first response are sent
-    int opt = 0;
-    setsockopt(server->fd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
-    setsockopt(remote->fd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+    if (!remote->recv_ctx->connected) {
+        int opt = 0;
+        setsockopt(server->fd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+        setsockopt(remote->fd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+        remote->recv_ctx->connected = 1;
+    }
 }
 
 static void
@@ -2021,6 +2024,7 @@ main(int argc, char **argv)
         LOGI("using tcp fast open");
 #else
         LOGE("tcp fast open is not supported by this environment");
+        fast_open = 0;
 #endif
     }
 
@@ -2123,7 +2127,7 @@ main(int argc, char **argv)
         // Setup UDP
         if (mode != TCP_ONLY) {
             init_udprelay(server_host[index], server_port, mtu, m,
-                          auth, atoi(timeout), iface, protocol);
+                          auth, atoi(timeout), iface, protocol, protocol_param);
         }
 
         if (host && strcmp(host, ":") > 0)
