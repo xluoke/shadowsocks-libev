@@ -21,7 +21,7 @@ SS_COMMON_LIBS += $(top_builddir)/libev/libev.la \
                   $(top_builddir)/libsodium/src/libsodium/libsodium.la
 endif
 
-bin_PROGRAMS = ss-local ss-tunnel
+bin_PROGRAMS = ss-local ss-tunnel ss-check
 if !BUILD_WINCOMPAT
 bin_PROGRAMS += ss-server ss-manager
 endif
