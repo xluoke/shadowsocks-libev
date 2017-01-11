@@ -54,7 +54,7 @@ static int http_parse_url(const char *url,char *host,char *file,int *port)
     char *ptr1,*ptr2;
     int len = 0;
     if(!url || !host || !file || !port){
-        return -1;
+        return 1;
     }
 
     ptr1 = (char *)url;
@@ -62,7 +62,7 @@ static int http_parse_url(const char *url,char *host,char *file,int *port)
     if(!strncmp(ptr1,"http://",strlen("http://"))){
         ptr1 += strlen("http://");
     }else{
-        return -1;
+        return 1;
     }
 
     ptr2 = strchr(ptr1,'/');
@@ -105,7 +105,7 @@ static int http_tcpclient_send(int socket,char *buff,int size){
     while(sent < size){
         tmpres = send(socket,buff+sent,size-sent,0);
         if(tmpres == -1){
-            return -1;
+            return 1;
         }
         sent += tmpres;
     }
