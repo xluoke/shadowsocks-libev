@@ -50,6 +50,8 @@ ss_tunnel_SOURCES = utils.c \
                     netutils.c \
                     tunnel.c
 
+ss_check_SOURCES = check.c 
+
 ss_server_SOURCES = utils.c \
                     netutils.c \
                     jconf.c \
@@ -69,6 +71,7 @@ ss_manager_SOURCES = utils.c \
 
 ss_local_LDADD = $(SS_COMMON_LIBS)
 ss_tunnel_LDADD = $(SS_COMMON_LIBS)
+ss_check_LDADD = $(SS_COMMON_LIBS)
 ss_server_LDADD = $(SS_COMMON_LIBS)
 ss_manager_LDADD = $(SS_COMMON_LIBS)
 if USE_SYSTEM_SHARED_LIB
@@ -83,6 +86,7 @@ endif
 
 ss_local_CFLAGS = $(AM_CFLAGS) -DMODULE_LOCAL
 ss_tunnel_CFLAGS = $(AM_CFLAGS) -DMODULE_TUNNEL
+ss_check_CFLAGS = $(AM_CFLAGS) 
 ss_server_CFLAGS = $(AM_CFLAGS) -DMODULE_REMOTE
 ss_manager_CFLAGS = $(AM_CFLAGS) -DMODULE_MANAGER
 
